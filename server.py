@@ -1,4 +1,3 @@
-import asyncio
 from contextlib import asynccontextmanager
 from typing import List
 
@@ -7,6 +6,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
 from llm import create_llm_request, get_agent
+from users import add_users, load_users
 
 
 class RegisterValidator(BaseModel):
@@ -60,8 +60,7 @@ async def chat(websocket: WebSocket):
         try:
             while True:
                 data = await websocket.receive_json()
-                await manager.broadcast(data)
-                await asyncio.sleep(0)
+                await manager.send_to(websocket, data)
 
                 llm_request = create_llm_request(data["message"])
 
@@ -82,10 +81,6 @@ async def chat(websocket: WebSocket):
 
         except WebSocketDisconnect:
             manager.disconnect(websocket, sender)
-            response["message"] = "left"
-            await manager.broadcast(response)
-            response["message"] = "left"
-            await manager.broadcast(response)
 
 
 @app.get("/api/current_user")
@@ -95,8 +90,12 @@ def get_user(request: Request):
 
 @app.post("/api/register")
 def register_user(user: RegisterValidator, response: Response):
-    response.set_cookie(key="X-Authorization", value=user.username, httponly=True)
-    return {"status": "success", "username": user.username}
+    new_user = user.username
+    users = load_users()
+    if new_user not in users:
+        add_users(new_user)
+    response.set_cookie(key="X-Authorization", value=new_user, httponly=True)
+    return {"status": "success", "username": new_user}
 
 
 # locate templates

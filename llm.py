@@ -5,11 +5,6 @@ from langchain.agents import create_agent
 from langchain_core.tools import tool
 from langchain_ollama import ChatOllama
 
-# @tool
-# def get_weather(city: str) -> str:
-#     """Get the weather for a given city."""
-#     return "the weather is good"
-
 
 @tool
 def get_weather(city: str) -> str:
@@ -52,17 +47,8 @@ async def get_request(agent):
 
 
 async def main():
-    llm = ChatOllama(model="qwen2.5", temperature=1)
-    tools = [get_weather]
-    system_prompt = "You are a weather agent. You are given a city and you need to return the weather for that city."
-
-    agent = create_agent(
-        llm,
-        tools,
-        system_prompt=system_prompt,
-    )
-
-    task1 = asyncio.create_task(get_request(agent))
+    llm = get_agent()
+    task1 = asyncio.create_task(get_request(llm))
     await task1
 
 
@@ -80,4 +66,5 @@ def get_agent():
 
 
 if __name__ == "__main__":
+    asyncio.run(main())
     asyncio.run(main())
