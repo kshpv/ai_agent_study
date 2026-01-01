@@ -4,6 +4,7 @@ import requests
 from langchain.agents import create_agent
 from langchain_core.tools import tool
 from langchain_ollama import ChatOllama
+from langgraph.checkpoint.memory import InMemorySaver
 
 
 @tool
@@ -61,10 +62,10 @@ def get_agent():
         llm,
         tools,
         system_prompt=system_prompt,
+        checkpointer=InMemorySaver(),
     )
     return agent
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
     asyncio.run(main())

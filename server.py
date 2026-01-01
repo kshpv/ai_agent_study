@@ -1,4 +1,6 @@
+import json
 from contextlib import asynccontextmanager
+from datetime import datetime
 from typing import List
 
 from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect
@@ -53,6 +55,7 @@ class SocketManager:
 @app.websocket("/api/chat")
 async def chat(websocket: WebSocket):
     sender = websocket.cookies.get("X-Authorization")
+    sender_id = load_users()[sender]
     if sender:
         await manager.connect(websocket, sender)
         response = {"sender": sender, "message": "got connected"}
@@ -67,6 +70,7 @@ async def chat(websocket: WebSocket):
                 async with streaming(websocket):
                     async for chunk, _metadata in agent.astream(
                         llm_request,
+                        config={"configurable": {"thread_id": sender_id}},
                         stream_mode="messages",
                     ):
                         if chunk.type != "AIMessageChunk":
@@ -80,6 +84,34 @@ async def chat(websocket: WebSocket):
                             await manager.send_to(websocket, stream_data)
 
         except WebSocketDisconnect:
+            config = {"configurable": {"thread_id": sender_id}}
+            history = agent.get_state_history(config)
+
+            conversation_data = {
+                "thread_id": config["configurable"]["thread_id"],
+                "exported_at": datetime.utcnow().isoformat(),
+                "checkpoints": [],
+            }
+
+            for cp in history:
+                checkpoint_data = {
+                    "checkpoint_id": cp.metadata.get(
+                        "checkpoint_id", "unknown"
+                    ),  # From metadata!
+                    "values": {
+                        key: value  # Serialize values (messages are serializable)
+                        for key, value in cp.values.items()
+                    },
+                    "metadata": cp.metadata,
+                    "created_at": cp.created_at,
+                }
+                conversation_data["checkpoints"].append(checkpoint_data)
+
+            with open("conversation_history.json", "w") as f:
+                json.dump(conversation_data, f, indent=2, default=str)
+
+            print("Saved successfully!")
+
             manager.disconnect(websocket, sender)
 
 
@@ -110,4 +142,5 @@ def get_home(request: Request):
 
 @app.get("/chat")
 def get_chat(request: Request):
+    return templates.TemplateResponse("chat.html", {"request": request})
     return templates.TemplateResponse("chat.html", {"request": request})

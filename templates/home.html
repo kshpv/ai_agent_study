@@ -31,10 +31,21 @@
             left: 75%;
             margin-left: 2px;
         }
+        .error-message {
+            color: #dc3545;
+            margin-top: 10px;
+            text-align: center;
+            font-size: 14px;
+        }
     </style>
 </head>
 <script>
         $(document).ready(function(){
+            // Clear error message when user starts typing
+            $("#user_input").on("input", function(){
+                $(".error-message").text("");
+            });
+
             $("#user-form").on("submit", function(e){
                 e.preventDefault();
                 var current_user = $("#user_input").val();
@@ -46,9 +57,18 @@
                         contentType: 'application/json',
                         data: JSON.stringify(data),
                         success: function(response){
-                            $(".chat-body").removeClass("hide");
-                            $(".chat-register").addClass("hide");
-                            window.location.href = "/chat";
+                            if (response.status === "success") {
+                                $(".error-message").text("");
+                                $(".chat-body").removeClass("hide");
+                                $(".chat-register").addClass("hide");
+                                window.location.href = "/chat";
+                            } else if (response.status === "fail") {
+                                $(".error-message").text(response.reason + " Please enter a different name.");
+                                $("#user_input").val("").focus();
+                            }
+                        },
+                        error: function(xhr, status, error){
+                            $(".error-message").text("An error occurred. Please try again or enter a different name.");
                         }
                     });
                 }
@@ -64,6 +84,7 @@
                 <input type="text" class="form-control" id="user_input" placeholder="Enter your name">
                 <button id="start" type="submit" class="btn btn-primary">Start Chat</button>
             </form>
+            <div class="error-message"></div>
         </div>
     </div>
 </body>
