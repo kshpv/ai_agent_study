@@ -16,63 +16,91 @@
             left: 2.5%;
             top: 5%;
         }
-        #user-form {
-            position: absolute;
-            top: 20%;
-            left: 50%;
-            transform: translateX(-50%);
+        .conversations-list {
+            max-height: 70%;
+            overflow-y: auto;
+            padding: 20px;
         }
-        #user-form input {
-            width: 400px;
-            padding-right: 30%;
+        .conversation-item {
+            padding: 15px;
+            margin-bottom: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background-color 0.2s;
         }
-        #user-form button {
-            position: absolute;
-            left: 75%;
-            margin-left: 2px;
+        .conversation-item:hover {
+            background-color: #f5f5f5;
         }
-        .error-message {
-            color: #dc3545;
-            margin-top: 10px;
+        .conversation-item h5 {
+            margin: 0;
+            color: #333;
+        }
+        .empty-state {
             text-align: center;
-            font-size: 14px;
+            padding: 40px;
+            color: #666;
+        }
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+        }
+        .new-conversation-btn {
+            margin: 20px;
+            text-align: center;
+        }
+        .new-conversation-btn button {
+            padding: 12px 30px;
+            font-size: 16px;
         }
     </style>
 </head>
 <script>
         $(document).ready(function(){
-            // Clear error message when user starts typing
-            $("#user_input").on("input", function(){
-                $(".error-message").text("");
-            });
-
-            $("#user-form").on("submit", function(e){
-                e.preventDefault();
-                var current_user = $("#user_input").val();
-                if (current_user){
-                    data = {"username": current_user};
-                    $.ajax({
-                        url: '/api/register',
-                        type: 'POST',
-                        contentType: 'application/json',
-                        data: JSON.stringify(data),
-                        success: function(response){
-                            if (response.status === "success") {
-                                $(".error-message").text("");
-                                $(".chat-body").removeClass("hide");
-                                $(".chat-register").addClass("hide");
-                                window.location.href = "/chat";
-                            } else if (response.status === "fail") {
-                                $(".error-message").text(response.reason + " Please enter a different name.");
-                                $("#user_input").val("").focus();
-                            }
-                        },
-                        error: function(xhr, status, error){
-                            $(".error-message").text("An error occurred. Please try again or enter a different name.");
+            // Load sessions on page load
+            function loadSessions() {
+                $(".conversations-list").html('<div class="loading">Loading sessions...</div>');
+                $.ajax({
+                    url: '/api/sessions',
+                    type: 'GET',
+                    success: function(response){
+                        var sessions = response.sessions || [];
+                        var listHtml = '';
+                        
+                        if (sessions.length === 0) {
+                            listHtml = '<div class="empty-state">No previous sessions found</div>';
+                        } else {
+                            sessions.forEach(function(session) {
+                                var sessionName = session.name || 'Unnamed Session';
+                                var sessionId = session.id || '';
+                                listHtml += '<div class="conversation-item" data-id="' + sessionId + '">';
+                                listHtml += '<h5>' + sessionName + '</h5>';
+                                listHtml += '</div>';
+                            });
                         }
-                    });
-                }
+                        
+                        $(".conversations-list").html(listHtml);
+                        
+                        // Add click handlers to session items
+                        $(".conversation-item").on("click", function(){
+                            var sessionId = $(this).data("id");
+                            // Navigate to chat with session ID
+                            window.location.href = "/chat?session_id=" + sessionId;
+                        });
+                    },
+                    error: function(xhr, status, error){
+                        $(".conversations-list").html('<div class="empty-state">Error loading sessions. Please try again.</div>');
+                    }
+                });
+            }
+            
+            // Handle new conversation button click
+            $("#new-conversation-btn").on("click", function(){
+                window.location.href = "/chat";
             });
+            
+            loadSessions();
         });
     </script>
 <body>
@@ -80,11 +108,14 @@
         <div class="card-body">
             <h4 class="card-title text-center"> Chat App </h4>
             <hr>
-            <form class="form-inline" id="user-form">
-                <input type="text" class="form-control" id="user_input" placeholder="Enter your name">
-                <button id="start" type="submit" class="btn btn-primary">Start Chat</button>
-            </form>
-            <div class="error-message"></div>
+            <div class="new-conversation-btn">
+                <button type="button" class="btn btn-primary btn-lg" id="new-conversation-btn">
+                    Start New Conversation
+                </button>
+            </div>
+            <div class="conversations-list">
+                <!-- Conversations will be loaded here -->
+            </div>
         </div>
     </div>
 </body>

@@ -53,8 +53,19 @@
             });
             var receiver = "";
             var currentStreamElement = null;
+            
+            // Get session_id from URL query parameter
+            var urlParams = new URLSearchParams(window.location.search);
+            var sessionId = urlParams.get('session_id');
+            
+            // Build WebSocket URL with session_id if present
+            var wsUrl = "ws://127.0.0.1:8000/api/chat";
+            if (sessionId) {
+                wsUrl += "?session_id=" + encodeURIComponent(sessionId);
+            }
+            
             // create websocket
-            var socket = new WebSocket("ws://127.0.0.1:8000/api/chat");
+            var socket = new WebSocket(wsUrl);
             socket.onmessage = function(event) {
                 var parent = $("#messages");
                 var data = JSON.parse(event.data);
@@ -62,8 +73,16 @@
                 if (sender == current_user)
                     sender = "You";
                 
+                // Handle loaded messages (from session history)
+                if (data['loaded']) {
+                    var message = data['message'];
+                    var content = "<p><strong>"+sender+" </strong> <span> "+message+"</span></p>";
+                    parent.append(content);
+                    // Auto-scroll to bottom
+                    parent.scrollTop(parent[0].scrollHeight);
+                }
                 // Handle streaming
-                if (data['stream_start']) {
+                else if (data['stream_start']) {
                     // Create a new message element for streaming
                     currentStreamElement = $("<p><strong>" + sender + " </strong> <span class='streaming-message'></span></p>");
                     parent.append(currentStreamElement);
