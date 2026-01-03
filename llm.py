@@ -2,6 +2,7 @@ import asyncio
 
 import requests
 from langchain.agents import create_agent
+from langchain_core.messages import BaseMessage, HumanMessage
 from langchain_core.tools import tool
 from langchain_ollama import ChatOllama
 from langgraph.checkpoint.memory import InMemorySaver
@@ -29,8 +30,9 @@ def get_weather(city: str) -> str:
         return f"Sorry, couldn't fetch weather for {city}: {str(e)}"
 
 
-def create_llm_request(message: str):
-    return {"messages": [{"role": "user", "content": message}]}
+def create_llm_request(message: str, previous_messages: list[BaseMessage]):
+    messages = previous_messages + [HumanMessage(content=message)]
+    return {"messages": messages}
 
 
 async def get_request(agent):
@@ -53,8 +55,8 @@ async def main():
     await task1
 
 
-def get_agent():
-    llm = ChatOllama(model="qwen2.5", temperature=1)
+def get_agent(temperature: float = 0.0):
+    llm = ChatOllama(model="qwen2.5", temperature=temperature)
     tools = [get_weather]
     system_prompt = "You are a weather agent. You are given a city and you need to return the weather for that city."
 

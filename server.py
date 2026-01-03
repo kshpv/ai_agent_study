@@ -1,12 +1,15 @@
 import json
+import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime
+from pathlib import Path
 from typing import List
 
 from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.templating import Jinja2Templates
+from langchain_core.messages import AIMessage, HumanMessage
 from pydantic import BaseModel
 
+from chat import ChatSession, FileChatStore, get_messages_history, lc_to_stored
 from llm import create_llm_request, get_agent
 from users import add_users, load_users
 
@@ -54,65 +57,124 @@ class SocketManager:
 
 @app.websocket("/api/chat")
 async def chat(websocket: WebSocket):
+    # Extract session_id from query string
+    query_string = websocket.url.query
+    session_id = None
+    if query_string:
+        from urllib.parse import parse_qs
+
+        params = parse_qs(query_string)
+        if "session_id" in params:
+            session_id = params["session_id"][0]
+
     sender = websocket.cookies.get("X-Authorization")
-    sender_id = load_users()[sender]
-    if sender:
-        await manager.connect(websocket, sender)
-        response = {"sender": sender, "message": "got connected"}
-        await manager.broadcast(response)
+    if not sender:
+        await websocket.close(code=1008, reason="Unauthorized")
+        return
+
+    sender_id = load_users().get(sender)
+    if not sender_id:
+        # Create new user if doesn't exist
+        add_users(sender)
+        sender_id = load_users()[sender]
+
+    await manager.connect(websocket, sender)
+    chat_store = FileChatStore()
+
+    # Load existing session or create new one
+    if session_id:
         try:
-            while True:
-                data = await websocket.receive_json()
-                await manager.send_to(websocket, data)
-
-                llm_request = create_llm_request(data["message"])
-
-                async with streaming(websocket):
-                    async for chunk, _metadata in agent.astream(
-                        llm_request,
-                        config={"configurable": {"thread_id": sender_id}},
-                        stream_mode="messages",
-                    ):
-                        if chunk.type != "AIMessageChunk":
-                            continue
-                        if chunk.content and chunk.content != "null":
-                            stream_data = {
-                                "sender": "LLM",
-                                "message": chunk.content,
-                                "stream_chunk": True,
-                            }
-                            await manager.send_to(websocket, stream_data)
-
-        except WebSocketDisconnect:
-            config = {"configurable": {"thread_id": sender_id}}
-            history = agent.get_state_history(config)
-
-            conversation_data = {
-                "thread_id": config["configurable"]["thread_id"],
-                "exported_at": datetime.utcnow().isoformat(),
-                "checkpoints": [],
-            }
-
-            for cp in history:
-                checkpoint_data = {
-                    "checkpoint_id": cp.metadata.get(
-                        "checkpoint_id", "unknown"
-                    ),  # From metadata!
-                    "values": {
-                        key: value  # Serialize values (messages are serializable)
-                        for key, value in cp.values.items()
+            session = chat_store.load(session_id)
+            # Send loaded messages to frontend
+            for stored_msg in session.messages:
+                sender_name = "You" if stored_msg.role == "user" else "LLM"
+                await manager.send_to(
+                    websocket,
+                    {
+                        "sender": sender_name,
+                        "message": stored_msg.content,
+                        "loaded": True,
                     },
-                    "metadata": cp.metadata,
-                    "created_at": cp.created_at,
-                }
-                conversation_data["checkpoints"].append(checkpoint_data)
+                )
+        except FileNotFoundError:
+            # Session not found, create new one with provided ID
+            session = ChatSession.new(session_id, "New chat", metadata=None)
+    else:
+        # Create new session with unique ID
+        session_id = str(uuid.uuid4())
+        session = ChatSession.new(session_id, "New chat", metadata=None)
 
-            with open("conversation_history.json", "w") as f:
-                json.dump(conversation_data, f, indent=2, default=str)
+    # Ensure session has correct session_id
+    session.session_id = session_id
 
-            print("Saved successfully!")
+    try:
+        while True:
+            data = await websocket.receive_json()
+            await manager.send_to(websocket, data)
 
-            manager.disconnect(websocket, sender)
+            user_text = data["message"]
+            user_message = HumanMessage(content=user_text)
+            stored_message = lc_to_stored(user_message)
+            session.messages.append(stored_message)
+
+            llm_request = create_llm_request(
+                user_text, get_messages_history(session.messages)
+            )
+            full_message = []
+            async with streaming(websocket):
+                async for chunk, _metadata in agent.astream(
+                    llm_request,
+                    config={"configurable": {"thread_id": sender_id}},
+                    stream_mode="messages",
+                ):
+                    if chunk.type != "AIMessageChunk":
+                        continue
+                    if chunk.content and chunk.content != "null":
+                        stream_data = {
+                            "sender": "LLM",
+                            "message": chunk.content,
+                            "stream_chunk": True,
+                        }
+                        full_message.append(chunk.content)
+                        await manager.send_to(websocket, stream_data)
+
+            response_text = "".join(full_message)
+            response_message = AIMessage(content=response_text)
+            stored_message = lc_to_stored(response_message)
+            session.messages.append(stored_message)
+
+    except WebSocketDisconnect:
+        chat_store.save(session)
+        manager.disconnect(websocket, sender)
+
+
+@app.get("/api/sessions")
+def get_sessions():
+    """List all chat sessions from the sessions directory."""
+    chat_store = FileChatStore()
+    sessions_dir = Path(chat_store.root_dir)
+
+    sessions = []
+    if sessions_dir.exists():
+        for session_file in sessions_dir.glob("*.json"):
+            try:
+                session_id = session_file.stem
+                session = chat_store.load(session_id)
+                sessions.append(
+                    {
+                        "id": session.session_id,
+                        "name": session.title,
+                        "created_at": session.created_at,
+                        "updated_at": session.updated_at,
+                    }
+                )
+            except (FileNotFoundError, KeyError, ValueError, json.JSONDecodeError):
+                # Skip invalid session files
+                continue
+
+    # Sort by updated_at descending (most recent first)
+    sessions.sort(key=lambda x: x.get("updated_at", ""), reverse=True)
+    return {"sessions": sessions}
 
 
 @app.get("/api/current_user")
@@ -142,5 +204,4 @@ def get_home(request: Request):
 
 @app.get("/chat")
 def get_chat(request: Request):
-    return templates.TemplateResponse("chat.html", {"request": request})
     return templates.TemplateResponse("chat.html", {"request": request})
